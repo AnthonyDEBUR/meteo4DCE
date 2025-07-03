@@ -4,12 +4,14 @@
 \alias{get_precip_stations}
 \title{get_precip_stations}
 \usage{
-get_precip_stations(departements, token)
+get_precip_stations(departements, token, duree = "horaire")
 }
 \arguments{
 \item{departements}{Vecteur avec la liste des codes de départements}
 
 \item{token}{: token d'accès à l'API météo France (disponible gratuitement sur le site https://portail-api.meteofrance.fr/)}
+
+\item{duree}{: soit horaire si on veut récupérer les données horaires, soit quotidienne pour les données quotidiennes(par défaut duree="horaire")}
 }
 \value{
 Data Frame avec les stations météo disponibles

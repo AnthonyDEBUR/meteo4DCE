@@ -78,6 +78,7 @@ testthat::test_that("get_mf_token échoue si le token est vide", {
 #'
 #' @param departements Vecteur avec la liste des codes de départements
 #' @param token : token d'accès à l'API météo France (disponible gratuitement sur le site https://portail-api.meteofrance.fr/)
+#' @param duree : soit horaire si on veut récupérer les données horaires, soit quotidienne pour les données quotidiennes(par défaut duree="horaire")
 #'
 #' @return
 #' Data Frame avec les stations météo disponibles
@@ -89,8 +90,18 @@ testthat::test_that("get_mf_token échoue si le token est vide", {
 #'   stations <- get_precip_stations(c(56, 35), token)
 #'   print(stations)
 #' }
-get_precip_stations <- function(departements, token) {
-  base_url <- "https://public-api.meteofrance.fr/public/DPClim/v1/liste-stations/horaire"
+get_precip_stations <- function(departements, token, duree="horaire") {
+  
+     # Vérification du paramètre 'duree'
+     duree <- tolower(duree)
+     if (!duree %in% c("horaire", "quotidienne")) {
+       stop("Le paramètre 'duree' doit être soit 'horaire', soit 'quotidienne'.")
+     }
+  
+  if (duree=="horaire")
+  {base_url <- "https://public-api.meteofrance.fr/public/DPClim/v1/liste-stations/horaire"}
+  else if (duree=="quotidienne")
+  {base_url <- "https://public-api.meteofrance.fr/public/DPClim/v1/liste-stations/quotidienne"}
   all_results <- list()
 
   for (dep in departements) {
@@ -120,6 +131,18 @@ all_results,
  ~ dplyr::bind_rows(.x) %>% dplyr::mutate(departement = .y)
 )
 
+# Vérifie et renomme les colonnes si nécessaire
+if (!all(c("lon", "lat") %in% names(all_results))) {
+  if (all(c("longitude", "latitude") %in% names(all_results))) {
+    all_results <- dplyr::rename(all_results, lon = longitude, lat = latitude)
+  } else {
+    stop("Les colonnes de coordonnées 'lon' et 'lat' (ou 'longitude' et 'latitude') sont manquantes.")
+  }
+}
+
+# Conversion en objet sf
+all_results <- sf::st_as_sf(all_results, coords = c("lon", "lat"), crs = 4326)
+
   
   return(all_results)
 }
@@ -143,6 +166,56 @@ testthat::test_that("get_precip_stations retourne NULL avec token invalide", {
 })
 
 ```
+
+
+# get_infos_stations
+```{r function}
+#' @title Informations sur une station Météo France 
+#' @description Renvoie l'historique de la station Météo France. 
+#' @param id_station Identifiant de la station (chaîne de caractères).
+#' @param token Jeton d'accès à l'API Météo France. 
+#' @return Un data.frame contenant les informations sur la station. 
+#' @export 
+#' @examples 
+#' if (interactive()) { 
+#' token <- Sys.getenv("MF_TOKEN") 
+#' infos_station <- get_infos_stations("35281001", token) 
+#' print(infos_station)
+#'  }
+get_infos_stations <- function(id_station, token) {
+  # Construire l'URL
+  url <- paste0("https://public-api.meteofrance.fr/public/DPClim/v1/information-station?id-station=", id_station)
+  
+  # Requête GET
+  response <- httr::GET(
+    url = url,
+    httr::add_headers(
+      Accept = "*/*",
+      apikey = token
+    )
+  )
+  
+  # Vérifier le statut
+  if (httr::status_code(response) != 200) {
+    stop("Erreur lors du téléchargement : ", httr::status_code(response))
+  }
+  
+  # Lire le contenu texte
+   content_data <- httr::content(response, as = "parsed", type = "application/json")%>%
+     unlist
+  
+  # # Lire le CSV en data.frame
+  # df <- read.csv2(text = contenu_csv, stringsAsFactors = FALSE)
+  # 
+  # # conversion des dates
+  # df$DATE <- as.POSIXct(as.character(df$DATE), format = "%Y%m%d%H", tz = "UTC")
+  
+  return(content_data)
+}
+
+```
+
+
 
 
 # commande_donnees_horaires
@@ -194,6 +267,58 @@ commande_donnees_horaires <- function(id_station, date_debut, date_fin, token) {
 
 
 ```
+
+# commande_donnees_quotidiennes
+```{r function}
+#' @title Commander des données quotidiennes
+#' @description Interroge l'API Météo France pour commander des données horaires pour une station entre deux dates.
+#' @param id_station Identifiant de la station (chaîne de caractères).
+#' @param date_debut Date de début de la période (format ISO 8601).
+#' @param date_fin Date de fin de la période (format ISO 8601).
+#' @param token Jeton d'accès à l'API Météo France (OAuth2).
+#' @return Un objet JSON contenant l'identifiant de la commande.
+#' @export
+#' @examples
+#' if (interactive()) {
+#'   token <- get_mf_token()
+#'   commande <- commande_donnees_quotidiennes(
+#'     id_station = "56004001",
+#'     date_debut = "2024-01-01T00:00:00Z",
+#'     date_fin   = "2025-01-01T00:00:00Z",
+#'     token = token
+#'   )
+#'   print(commande)
+#' }
+commande_donnees_quotidiennes <- function(id_station, date_debut, date_fin, token) {
+  base_url <- "https://public-api.meteofrance.fr/public/DPClim/v1/commande-station/quotidienne"
+  
+  url <- paste0(
+    base_url,
+    "?id-station=", id_station,
+    "&date-deb-periode=", URLencode(date_debut, reserved = TRUE),
+    "&date-fin-periode=", URLencode(date_fin, reserved = TRUE)
+  )
+  
+ response <- httr::GET(
+  url = url,
+  httr::add_headers(
+    Accept = "*/*",
+    apikey = token  # <-- clé correcte ici
+  )
+)
+
+  
+  if (httr::status_code(response) == 202) {
+    return(as.character(unlist(httr::content(response, as = "parsed", type = "application/json"))))
+  } else {
+    stop(paste("Erreur HTTP", httr::status_code(response), ":", httr::content(response, as = "text")))
+  }
+}
+
+
+```
+
+
 
 # telecharger_commande_csv
 ```{r function}
@@ -253,8 +378,23 @@ telecharger_commande_csv <- function(id_cmde, token) {
   # Lire le CSV en data.frame
   df <- read.csv2(text = contenu_csv, stringsAsFactors = FALSE)
   
-  # conversion des dates
-  df$DATE <- as.POSIXct(as.character(df$DATE), format = "%Y%m%d%H", tz = "UTC")
+   # Détection automatique du format de la colonne DATE
+if ("DATE" %in% names(df)) {
+  # Vérifie la longueur des chaînes de date
+  date_lengths <- unique(nchar(na.omit(as.character(df$DATE))))
+  
+  if (all(date_lengths == 10)) {
+    # Format horaire : YYYYMMDDHH
+    df$DATE <- as.POSIXct(df$DATE, format = "%Y%m%d%H", tz = "UTC")
+  } else if (all(date_lengths == 8)) {
+    # Format quotidien : YYYYMMDD
+    df$DATE <- as.Date(as.character(df$DATE), format = "%Y%m%d")
+  } else {
+    warning("Format de date non reconnu. La colonne DATE est laissée telle quelle.")
+  }
+}
+
+  
   
   return(df)
 }
@@ -277,45 +417,7 @@ testthat::test_that("Erreur si identifiant invalide",
 ```
 
 
-# Vignette
-```{r vignette, eval=TRUE, echo=TRUE}
-#' ---
-#' title: "Exemple d'utilisation du package meteo4DCE"
-#' description: 
-#' Cette vignette montre comment utiliser les fonctions principales du package
-#' meteo4DCE pour interroger l'API Météo France, récupérer les stations,
-#' commander des données horaires et les télécharger.
-#' ---
-
-# Charger le package
-library(meteo4DCE)
-
-# Obtenir le token d'authentification
-token <- get_mf_token()
-
-# Récupérer les stations météo avec données horaires de précipitations
-stations <- get_precip_stations(c(56, 35), token)
-
-# Commander les données horaires pour la première station
-commande <- commande_donnees_horaires(
-  id_station = stations[1, ]$id,
-  date_debut = "2024-01-01T00:00:00Z",
-  date_fin   = "2025-01-01T00:00:00Z",
-  token = token
-)
-
-# Télécharger les données au format CSV et les convertir en data.frame
-data <- telecharger_commande_csv(commande, token)
-
-# Afficher les premières lignes
-head(data)
-```
-
-
-
 fusen::inflate(flat_file = "dev/0-dev_mf_api.Rmd", vignette_name = NA)
-
-
 
 devtools::document()
 devtools::test()

@@ -56,8 +56,23 @@ telecharger_commande_csv <- function(id_cmde, token) {
   # Lire le CSV en data.frame
   df <- read.csv2(text = contenu_csv, stringsAsFactors = FALSE)
   
-  # conversion des dates
-  df$DATE <- as.POSIXct(as.character(df$DATE), format = "%Y%m%d%H", tz = "UTC")
+   # Détection automatique du format de la colonne DATE
+if ("DATE" %in% names(df)) {
+  # Vérifie la longueur des chaînes de date
+  date_lengths <- unique(nchar(na.omit(as.character(df$DATE))))
+  
+  if (all(date_lengths == 10)) {
+    # Format horaire : YYYYMMDDHH
+    df$DATE <- as.POSIXct(df$DATE, format = "%Y%m%d%H", tz = "UTC")
+  } else if (all(date_lengths == 8)) {
+    # Format quotidien : YYYYMMDD
+    df$DATE <- as.Date(as.character(df$DATE), format = "%Y%m%d")
+  } else {
+    warning("Format de date non reconnu. La colonne DATE est laissée telle quelle.")
+  }
+}
+
+  
   
   return(df)
 }
