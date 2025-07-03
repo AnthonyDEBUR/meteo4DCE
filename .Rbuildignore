@@ -3,3 +3,6 @@
 ^README\.Rmd$
 ^\.github$
 ^codecov\.yml$
+^.*\.Rproj$
+^\.Rproj\.user$
+^meteo4DCE\.Rproj$

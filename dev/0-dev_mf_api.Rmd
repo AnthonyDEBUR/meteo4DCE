@@ -1,0 +1,323 @@
+---
+title: "Fonctions pour l'API Météo France"
+output: html_document
+author: "Anthony DE BURGHRAVE"
+description: "Fonctions pour interroger l'API Météo France Données climatologiques"
+tags: [dev]
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r development, include=FALSE}
+library(testthat)
+```
+
+<!--
+ You need to run the 'description' chunk in the '0-dev_history.Rmd' file before continuing your code there.
+
+If it is the first time you use {fusen}, after 'description', you can directly run the last chunk of the present file with inflate() inside.
+--> 
+
+```{r development-load}
+# Load already included functions if relevant
+pkgload::load_all(export_all = FALSE)
+```
+
+# get_mf_token
+```{r function}
+#' @title Récupérer le token Météo France
+#' @description Cette fonction lit la variable d'environnement `MF_TOKEN` et retourne sa valeur.
+#' @return Une chaîne de caractères contenant le token.
+#' @export
+#' @examples
+#' if (interactive()) {
+#'   Sys.setenv(MF_TOKEN = "fake_token")
+#'   token <- get_mf_token()
+#'   print(token)
+#' }
+get_mf_token <- function() {
+  token <- Sys.getenv("MF_TOKEN")
+  if (token == "") {
+    stop("Le token Meteo France n'est pas defini. Utilisez Sys.setenv(MF_TOKEN = 'votre_token')")
+  }
+  return(token)
+}
+```
+
+
+
+```{r tests}
+#' ---
+#' title: "Tests pour les fonctions API Météo France"
+#' tags: [test]
+#' ---
+
+#' @test
+testthat::test_that("get_mf_token retourne le token si défini", {
+  withr::with_envvar(c(MF_TOKEN = "abc123"), {
+    token <- get_mf_token()
+    testthat::expect_equal(token, "abc123")
+  })
+})
+
+#' @test
+testthat::test_that("get_mf_token échoue si le token est vide", {
+  withr::with_envvar(c(MF_TOKEN = ""), {
+    testthat::expect_error(get_mf_token(), "n'est pas defini")
+  })
+})
+
+
+```
+
+
+
+# get_precip_stations
+```{r function}
+#' get_precip_stations
+#'
+#' @param departements Vecteur avec la liste des codes de départements
+#' @param token : token d'accès à l'API météo France (disponible gratuitement sur le site https://portail-api.meteofrance.fr/)
+#'
+#' @return
+#' Data Frame avec les stations météo disponibles
+#' @export
+#'
+#' @examples
+#' if (interactive()) {
+#'   token <- Sys.getenv("MF_TOKEN")  # ou demander à l'utilisateur
+#'   stations <- get_precip_stations(c(56, 35), token)
+#'   print(stations)
+#' }
+get_precip_stations <- function(departements, token) {
+  base_url <- "https://public-api.meteofrance.fr/public/DPClim/v1/liste-stations/horaire"
+  all_results <- list()
+
+  for (dep in departements) {
+    url <- paste0(base_url, "?id-departement=", dep, "&parametre=precipitation")
+
+response <- httr::GET(
+  url = url,
+  httr::add_headers(
+    Accept = "*/*",
+    apikey = token  # <-- clé correcte ici
+  )
+)
+
+
+    if (httr::status_code(response) == 200) {
+      content_data <- httr::content(response, as = "parsed", type = "application/json")
+      all_results[[as.character(dep)]] <- content_data
+    } else {
+      warning(paste("Erreur pour le departement", dep, ":", httr::status_code(response)))
+      all_results[[as.character(dep)]] <- NULL
+    }
+  }
+
+  
+all_results <- purrr::imap_dfr(
+all_results,
+ ~ dplyr::bind_rows(.x) %>% dplyr::mutate(departement = .y)
+)
+
+  
+  return(all_results)
+}
+
+
+```
+
+
+
+```{r tests}
+#' ---
+#' title: "Tests pour get_precip_stations"
+#' tags: [test]
+#' ---
+
+#' @test
+testthat::test_that("get_precip_stations retourne NULL avec token invalide", {
+  testthat::skip_if_offline()
+  result <- get_precip_stations(c(56), token = "token_invalide")
+  testthat::expect_null(result[["56"]])
+})
+
+```
+
+
+# commande_donnees_horaires
+```{r function}
+#' @title Commander des données horaires
+#' @description Interroge l'API Météo France pour commander des données horaires pour une station entre deux dates.
+#' @param id_station Identifiant de la station (chaîne de caractères).
+#' @param date_debut Date de début de la période (format ISO 8601).
+#' @param date_fin Date de fin de la période (format ISO 8601).
+#' @param token Jeton d'accès à l'API Météo France (OAuth2).
+#' @return Un objet JSON contenant l'identifiant de la commande.
+#' @export
+#' @examples
+#' if (interactive()) {
+#'   token <- get_mf_token()
+#'   commande <- commande_donnees_horaires(
+#'     id_station = "56004001",
+#'     date_debut = "2024-01-01T00:00:00Z",
+#'     date_fin   = "2025-01-01T00:00:00Z",
+#'     token = token
+#'   )
+#'   print(commande)
+#' }
+commande_donnees_horaires <- function(id_station, date_debut, date_fin, token) {
+  base_url <- "https://public-api.meteofrance.fr/public/DPClim/v1/commande-station/horaire"
+  
+  url <- paste0(
+    base_url,
+    "?id-station=", id_station,
+    "&date-deb-periode=", URLencode(date_debut, reserved = TRUE),
+    "&date-fin-periode=", URLencode(date_fin, reserved = TRUE)
+  )
+  
+ response <- httr::GET(
+  url = url,
+  httr::add_headers(
+    Accept = "*/*",
+    apikey = token  # <-- clé correcte ici
+  )
+)
+
+  
+  if (httr::status_code(response) == 202) {
+    return(as.character(unlist(httr::content(response, as = "parsed", type = "application/json"))))
+  } else {
+    stop(paste("Erreur HTTP", httr::status_code(response), ":", httr::content(response, as = "text")))
+  }
+}
+
+
+```
+
+# telecharger_commande_csv
+```{r function}
+#' @title Télécharger un fichier CSV depuis une commande Météo France 
+#' @description Télécharge et lit un fichier CSV à partir d'un identifiant de commande. 
+#' @param id_cmde Identifiant de la commande (chaîne de caractères). 
+#' @param token Jeton d'accès à l'API Météo France. 
+#' @return Un data.frame contenant les données du fichier CSV. 
+#' @details
+#' Correspondance des colonnes principales :
+#' - POSTE : Identifiant de la station météo
+#' - DATE : Date et heure de l’observation (format AMJH)
+#' - RR1 : Précipitations horaires (mm)
+#' - QRR1 : Qualité de la donnée RR1
+#' - T : Température instantanée (°C)
+#' - QT : Qualité de la température
+#' - TN : Température minimale horaire
+#' - TX : Température maximale horaire
+#' - FF : Vitesse moyenne du vent
+#' - QFF : Qualité de la vitesse du vent
+#' - DD : Direction du vent (degrés)
+#' - FXI : Rafale instantanée maximale
+#' - PMER : Pression au niveau de la mer (hPa)
+#' - UV_INDICE : Indice UV
+#' - N : Nébulosité totale
+#' - CL : Nébulosité basse
+#' - CM : Nébulosité moyenne
+#' - CH : Nébulosité haute
+#' @export 
+#' @examples 
+#' if (interactive()) { 
+#' token <- Sys.getenv("MF_TOKEN") 
+#' df <- telecharger_commande_csv("2025006008357", token) 
+#' head(df) 
+#'  }
+telecharger_commande_csv <- function(id_cmde, token) {
+  # Construire l'URL
+  url <- paste0("https://public-api.meteofrance.fr/public/DPClim/v1/commande/fichier?id-cmde=", id_cmde)
+  
+  # Requête GET
+  response <- httr::GET(
+    url = url,
+    httr::add_headers(
+      Accept = "*/*",
+      apikey = token
+    )
+  )
+  
+  # Vérifier le statut
+  if (httr::status_code(response) != 201) {
+    stop("Erreur lors du téléchargement : ", httr::status_code(response))
+  }
+  
+  # Lire le contenu texte
+  contenu_csv <- httr::content(response, as = "text", encoding = "UTF-8")
+  
+  # Lire le CSV en data.frame
+  df <- read.csv2(text = contenu_csv, stringsAsFactors = FALSE)
+  
+  # conversion des dates
+  df$DATE <- as.POSIXct(as.character(df$DATE), format = "%Y%m%d%H", tz = "UTC")
+  
+  return(df)
+}
+
+```
+
+
+```{r tests}
+#' title: "Tests pour telecharger_commande_csv" 
+#' tags: [test] 
+#'  ---
+#' @test 
+testthat::test_that("Erreur si identifiant invalide", 
+                    { testthat::skip_if_offline() 
+                      testthat::expect_error( 
+                        telecharger_commande_csv("id_invalide", 
+                                                 token = "token_invalide"), 
+                                              "Erreur lors du téléchargement" ) })
+
+```
+
+
+# Vignette
+```{r vignette, eval=TRUE, echo=TRUE}
+#' ---
+#' title: "Exemple d'utilisation du package meteo4DCE"
+#' description: 
+#' Cette vignette montre comment utiliser les fonctions principales du package
+#' meteo4DCE pour interroger l'API Météo France, récupérer les stations,
+#' commander des données horaires et les télécharger.
+#' ---
+
+# Charger le package
+library(meteo4DCE)
+
+# Obtenir le token d'authentification
+token <- get_mf_token()
+
+# Récupérer les stations météo avec données horaires de précipitations
+stations <- get_precip_stations(c(56, 35), token)
+
+# Commander les données horaires pour la première station
+commande <- commande_donnees_horaires(
+  id_station = stations[1, ]$id,
+  date_debut = "2024-01-01T00:00:00Z",
+  date_fin   = "2025-01-01T00:00:00Z",
+  token = token
+)
+
+# Télécharger les données au format CSV et les convertir en data.frame
+data <- telecharger_commande_csv(commande, token)
+
+# Afficher les premières lignes
+head(data)
+```
+
+
+
+fusen::inflate(flat_file = "dev/0-dev_mf_api.Rmd", vignette_name = NA)
+
+
+
+devtools::document()
+devtools::test()
+devtools::check()
+

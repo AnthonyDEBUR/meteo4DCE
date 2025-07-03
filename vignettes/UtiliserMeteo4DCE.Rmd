@@ -1,0 +1,97 @@
+---
+title: "Utiliser le package meteo4DCE"
+author: "Anthony DE BURGHRAVE"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+Ce document présente un exemple complet d'utilisation du package `meteo4DCE` pour :
+
+- récupérer un token d'accès à l'API Météo France,
+- obtenir les stations météo avec données horaires de précipitations,
+- commander des données horaires pour une station,
+- télécharger les données au format CSV,
+- les convertir en `data.frame`.
+
+## Prérequis : récupérer clé token sur le site de Météo France 
+
+Se connecter à https://portail-api.meteofrance.fr/ 
+Souscrire à l'API Données Climatologiques.
+Générer un token de type API Key.
+
+Il faut ensuite saisir ce token sous R.
+
+Pour cela 2 options : 
+- de manière temporaire (perdu au redémarrage de R) avec la commande : Sys.setenv(MF_TOKEN = "votre_token_ici")
+- en saisissant le token dans les variables d'environnement de R.
+
+Pour cette deuxième option, depuis R studio taper usethis::edit_r_environ() puis
+ajouter la ligne MF_TOKEN=votre_token_ici 
+Le token ne doit avoir ni espace avant ou après, ni être saisi entre guillemets.
+
+Sans R studio il est possible d'éditer le fichier .Renviron avec la commande suivante :
+
+file.edit("~/.Renviron")
+
+il faut ensuite rédémarrer R pour que la variable soit prise en compte.
+
+
+## Exemple de script
+
+```{r example-usage}
+# Charger le package
+library(meteo4DCE)
+
+# Étape 1 : Récupérer le token d'authentification
+token <- get_mf_token()
+
+# Étape 2 : Récupérer les stations météo pour les départements 56 et 35
+stations <- get_precip_stations(c(56, 35), token)
+
+# Étape 3 : Commander les données horaires pour la première station
+commande <- commande_donnees_horaires(
+  id_station = stations[1, ]$id,
+  date_debut = "2024-01-01T00:00:00Z",
+  date_fin   = "2024-01-03T00:00:00Z",
+  token = token
+)
+
+# pause le emps que le fichier soit généré
+Sys.sleep(30)
+
+# Étape 4 : Télécharger les données dans un data.frame
+data <- telecharger_commande_csv(commande, token)
+
+# Étape 5 : Afficher les premières lignes
+head(data)
+```
+
+## Remarques
+
+- Le format de date utilisé est ISO 8601 avec fuseau UTC.
+- La fonction `telecharger_commande_csv()` retourne un `data.frame` issu d’un fichier CSV texte.
+
+Les colonnes de data correspondent aux éléments suivants :
+- POSTE	Identifiant de la station météo
+- DATE	Date et heure de l’observation 
+- RR1	Précipitations horaires (mm)
+- QRR1	Qualité de la donnée RR1
+- T	Température instantanée (°C)
+- QT	Qualité de la température
+- TN	Température minimale horaire
+- TX	Température maximale horaire
+- FF	Vitesse moyenne du vent (m/s ou km/h selon contexte)
+- QFF	Qualité de la vitesse du vent
+- DD	Direction du vent (degrés)
+- FXI	Rafale instantanée maximale
+- PMER	Pression au niveau de la mer (hPa)
+- UV_INDICE	Indice UV
+- N, CL, CM, CH	Nébulosité totale, basse, moyenne, haute
+
